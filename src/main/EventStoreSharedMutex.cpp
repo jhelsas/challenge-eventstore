@@ -101,6 +101,8 @@ public:
  * I also considered implemented a thread pool in the lines of multiprocessing library from python. 
  * I have since reconsidered since reading the following reference:
  * https://ncona.com/2019/05/using-thread-pools-in-cpp/
+ *
+ * 
  * 
  */
 
@@ -113,9 +115,10 @@ public:
 
 class EventStore {
 private: 
-	std::unordered_multimap<std::string, long int> event_mmap;      // Simplest data structure to this problem, the alternative 
-	                                                                // would have been something like
-	                                                                // std::unordered_map< std::string, std::vector<int> > event_map;
+	std::unordered_multimap<std::string, int> event_mmap; // Simplest data structure to this problem, the alternative 
+	                                                      // would have been something like
+	                                                      // std::unordered_map< std::string, std::vector<int> > event_map;
+	
 	mutable std::shared_mutex sh_mutex_;
 
 public:
@@ -126,7 +129,7 @@ public:
 
 	void removeAll(std::string ev_type){
 		std::unique_lock<std::shared_mutex> lock(sh_mutex_);           // non-shared lock
-		event_mmap.erase(ev_type);                                     // deleting all timestamps for events 
+		event_mmap.erase(ev_type);                                     // deleting all timestamps for events
 	}                                                                // of a given time
 
 	// https://demin.ws/blog/english/2012/04/14/return-vector-by-value-or-pointer/
@@ -135,11 +138,10 @@ public:
 
 		auto range = event_mmap.equal_range(ev_type);                  // querying all events of type ev_type
 		if( range.first != range.second ){                             // then iterate over them
-			
 			std::vector<Event> vect;
-			
+
 			std::unordered_multimap<std::string, int>::iterator it = range.first;
-			
+
 			while( it != range.second ){
 				if( (it->second >= startTime) && (it->second < endTime) ){ // whenever the found timestamp falls within range
 					Event ev(ev_type , it->second);                          // create an event
@@ -170,6 +172,7 @@ public:
 };
 
 // -----------------------------------------------------
+
 
 void thread_fun_0(EventStore *ES,int idx){
 	if(idx == 0){
@@ -232,6 +235,7 @@ void parallel_test_0(void){
 	return ; 
 }
 
+
 #define NUM_EVENTS_TYPES 12
 
 void thread_fun_1(EventStore *ES,int idx){
@@ -240,13 +244,15 @@ void thread_fun_1(EventStore *ES,int idx){
 		const long int N = 128;
 		const int N_batches = 32;
 
+		std::srand(time(NULL));
+
 		for(int k=0;k<N_batches;k+=1){
-			long int time_shift = 0;
+			long int time_shift = (std::rand())%600;
 
 			for(int i=0;i<N;i+=1){
 				std::string str_val("event_label_");
 				str_val += std::to_string(i%NUM_EVENTS_TYPES);
-				Event ev(str_val,time_shift+i);
+				Event ev(str_val,time_shift+( std::rand()%20 ));
 				ES->insert(ev);
 			}	
 
@@ -265,27 +271,29 @@ void thread_fun_1(EventStore *ES,int idx){
 		std::string str_val("event_label_");
 		str_val += std::to_string(idx);
 
-		while(true){
+		const int N_batches = 32;
+
+		for(int k=0;k<N_batches;k+=1){
 			std::vector<Event> ev_vector = ES->query(str_val,0,400);
 
 			if(ev_vector.size() == 0)
 				break;
 
-			std::cout << "queried event vector: \n";
-			for(int i=0;i<ev_vector.size();i+=1)
-				std::cout << ev_vector[i].Type() << "," << ev_vector[i].Timestamp() << "\n";
+			//std::cout << "queried event vector: \n";
+			//for(int i=0;i<ev_vector.size();i+=1)
+			//	std::cout << ev_vector[i].Type() << "," << ev_vector[i].Timestamp() << "\n";
 		}
 	}
 }
 
 void parallel_test_1(void){
-	const int NUM_THREADS = 2;
+	const int NUM_THREADS = NUM_EVENTS_TYPES;
 	EventStore ES;
 
 	std::thread lthread[NUM_THREADS];
 
 	for(int i=0;i<NUM_THREADS;i++)
-		lthread[i] = std::thread(thread_fun_0,&ES,i-1);
+		lthread[i] = std::thread(thread_fun_1,&ES,i-1);
 
 	for(int i=0;i<NUM_THREADS;i++)
 		lthread[i].join();
@@ -301,7 +309,8 @@ int main(void){
 	//test_4();
 	//test_5();
 	//test_6();
-	parallel_test_0();
+	//parallel_test_0();
+	parallel_test_1();
 
 	return 0;
 }
