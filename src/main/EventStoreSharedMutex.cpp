@@ -102,7 +102,12 @@ public:
  * I have since reconsidered since reading the following reference:
  * https://ncona.com/2019/05/using-thread-pools-in-cpp/
  *
+ * The tests are not in any way comprehensive, but they exemplify the major points of the implementation.
+ * Without using carefully designed delays in each thread it is difficult to produce detailed correctness 
+ * verification of the parallel execution due to its non-deterministic nature. The correctness verification
+ * of the code would take much longer than the available time frame. 
  * 
+ * The available tests are intended more to exemplify than to verify the code.
  * 
  */
 
@@ -238,7 +243,7 @@ void parallel_test_0(void){
 
 #define NUM_EVENTS_TYPES 12
 
-void thread_fun_1(EventStore *ES,int idx){
+void thread_fun_1(EventStore *ES,int idx, std::mutex *io_mtx){
 	if(idx == -1){
 
 		const long int N = 128;
@@ -276,12 +281,12 @@ void thread_fun_1(EventStore *ES,int idx){
 		for(int k=0;k<N_batches;k+=1){
 			std::vector<Event> ev_vector = ES->query(str_val,0,400);
 
-			if(ev_vector.size() == 0)
-				break;
+			std::this_thread::sleep_for(std::chrono::microseconds(100 + (std::rand()%20) ));
+			{
+				const std::lock_guard<std::mutex> lock(*io_mtx);
 
-			//std::cout << "queried event vector: \n";
-			//for(int i=0;i<ev_vector.size();i+=1)
-			//	std::cout << ev_vector[i].Type() << "," << ev_vector[i].Timestamp() << "\n";
+				std::cout << "idx = " << idx << " / query size = " << ev_vector.size() << std::endl;
+			}
 		}
 	}
 }
@@ -289,11 +294,12 @@ void thread_fun_1(EventStore *ES,int idx){
 void parallel_test_1(void){
 	const int NUM_THREADS = NUM_EVENTS_TYPES;
 	EventStore ES;
+	std::mutex io_mtx;
 
 	std::thread lthread[NUM_THREADS];
 
 	for(int i=0;i<NUM_THREADS;i++)
-		lthread[i] = std::thread(thread_fun_1,&ES,i-1);
+		lthread[i] = std::thread(thread_fun_1,&ES,i-1,&io_mtx);
 
 	for(int i=0;i<NUM_THREADS;i++)
 		lthread[i].join();
