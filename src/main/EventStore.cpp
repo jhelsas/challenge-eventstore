@@ -260,12 +260,12 @@ void thread_fun_1(EventStore *ES,int idx, std::mutex *io_mtx){
 		std::srand(time(NULL));
 
 		for(int k=0;k<N_batches;k+=1){
-			long int time_shift = (std::rand())%600;
+			long int time_shift = (std::rand())%600+32*k;
 
 			for(int i=0;i<N;i+=1){
 				std::string str_val("event_label_");
-				str_val += std::to_string(i%NUM_EVENTS_TYPES);
-				Event ev(str_val,time_shift+( std::rand()%20 ));
+				str_val += std::to_string(std::rand()%NUM_EVENTS_TYPES);
+				Event ev(str_val,time_shift+( std::rand()%20 )); 
 				ES->insert(ev);
 			}	
 
@@ -277,10 +277,12 @@ void thread_fun_1(EventStore *ES,int idx, std::mutex *io_mtx){
 			std::string str_val("event_label_");
 			str_val += std::to_string(k);
 
-			ES->removeAll("event_label_1");
+			ES->removeAll(str_val);
 		}
 
 	} else {
+		std::this_thread::sleep_for(std::chrono::nanoseconds(300));
+
 		std::string str_val("event_label_");
 		str_val += std::to_string(idx);
 
@@ -300,7 +302,7 @@ void thread_fun_1(EventStore *ES,int idx, std::mutex *io_mtx){
 }
 
 void parallel_test_1(void){
-	const int NUM_THREADS = NUM_EVENTS_TYPES;
+	const int NUM_THREADS = NUM_EVENTS_TYPES+1;
 	EventStore ES;
 	std::mutex io_mtx;
 
