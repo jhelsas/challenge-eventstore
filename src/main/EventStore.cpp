@@ -6,6 +6,14 @@
 #include <shared_mutex>
 #include <unordered_map>
 
+void test_0(void);
+void test_1(void);
+void test_2(void);
+void test_3(void);
+void test_4(void);
+void test_5(void);
+void test_6(void);
+
 /*
  * Event structure that is used to input data 
  * into the EventStore and to receive the 
@@ -20,31 +28,29 @@ class Event {
 	long int timestamp;
 
 public: 
-		Event(std::string type,long int timestamp){
-			this->type      = type;
-			this->timestamp = timestamp;
-		}
+	Event(std::string type,long int timestamp){
+		this->type      = type;
+		this->timestamp = timestamp;
+	}
 
-		Event(const Event &obj){
-			this->type = obj.type;
-			this->timestamp = obj.timestamp;
-		}
+	Event(const Event &obj){
+		this->type = obj.type;
+		this->timestamp = obj.timestamp;
+	}
 
-		~Event(){
-		}
+	~Event(){
+	}
 
-		std::string Type(){
-			return this->type;
-		}
+	std::string Type(){
+		return this->type;
+	}
 
-		long int Timestamp(){
-			return this->timestamp;
-		}
+	long int Timestamp(){
+		return this->timestamp;
+	}
 };
 
 /*
- * From EventStoreSharedMutex.cpp file:
- * 
  * The requirement was the following:
  * 
  * "The implementation should be correct, fast, memory-efficient, and thread-safe. 
@@ -96,9 +102,20 @@ public:
  * I have since reconsidered since reading the following reference:
  * https://ncona.com/2019/05/using-thread-pools-in-cpp/
  *
- * ----------
+ * The tests are not in any way comprehensive, but they exemplify the major points of the implementation.
+ * Without using carefully designed delays in each thread it is difficult to produce detailed correctness 
+ * verification of the parallel execution due to its non-deterministic nature. The correctness verification
+ * of the code would take much longer than the available time frame. 
  * 
- * Serial version below, which was used as starting point fo the full version. 
+ * The available tests are intended more to exemplify than to verify the code.
+ *
+ * The compilation command used:
+ * 
+ * g++ -std=c++20 EventStore.cpp -lpthread -o EventStore
+ * 
+ * gcc version 10.3.0 (Ubuntu 10.3.0-1ubuntu1)
+ *
+ * Code execution verified with valgrind, no leaks identified. 
  * 
  */
 
@@ -114,28 +131,34 @@ private:
 	std::unordered_multimap<std::string, int> event_mmap; // Simplest data structure to this problem, the alternative 
 	                                                      // would have been something like
 	                                                      // std::unordered_map< std::string, std::vector<int> > event_map;
+	
+	mutable std::shared_mutex sh_mutex_;
 
 public:
 	void insert(Event in_event){
-		event_mmap.insert({ in_event.Type(), in_event.Timestamp() });
+		std::unique_lock<std::shared_mutex> lock(sh_mutex_);           // non-shared lock
+		event_mmap.insert({ in_event.Type(), in_event.Timestamp() });  // inserting event data on multimap
 	}
 
 	void removeAll(std::string ev_type){
-		event_mmap.erase(ev_type);
-	}
+		std::unique_lock<std::shared_mutex> lock(sh_mutex_);           // non-shared lock
+		event_mmap.erase(ev_type);                                     // deleting all timestamps for events
+	}                                                                // of a given time
 
 	// https://demin.ws/blog/english/2012/04/14/return-vector-by-value-or-pointer/
 	std::vector<Event> query(std::string ev_type , long int startTime, long int endTime ){
-		auto range = event_mmap.equal_range(ev_type);
-		if( range.first != range.second ){
+		std::shared_lock<std::shared_mutex> lock(sh_mutex_);           // for reads, a shared lock is used 
+
+		auto range = event_mmap.equal_range(ev_type);                  // querying all events of type ev_type
+		if( range.first != range.second ){                             // then iterate over them
 			std::vector<Event> vect;
 
 			std::unordered_multimap<std::string, int>::iterator it = range.first;
 
 			while( it != range.second ){
-				if( (it->second >= startTime) && (it->second < endTime) ){
-					Event ev(ev_type , it->second);
-					vect.push_back(ev);
+				if( (it->second >= startTime) && (it->second < endTime) ){ // whenever the found timestamp falls within range
+					Event ev(ev_type , it->second);                          // create an event
+					vect.push_back(ev);                                      // and add to the return vector
 				}
 				it++;
 			}
@@ -149,6 +172,8 @@ public:
 	}
 
 	void print_mmap(){
+		std::shared_lock<std::shared_mutex> lock(sh_mutex_);
+
 		std::unordered_multimap<std::string, int>::iterator it = event_mmap.begin();
  
     for (; it != this->event_mmap.end(); it++)
@@ -158,6 +183,153 @@ public:
     std::cout << std::endl;
 	}
 };
+
+// -----------------------------------------------------
+
+
+void thread_fun_0(EventStore *ES,int idx){
+	if(idx == 0){
+		for(int i=0;i<10;i+=1){
+			std::string str_val("event_label_");
+			str_val += std::to_string(i%3);
+			Event ev(str_val,i);
+			ES->insert(ev);
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		ES->removeAll("event_label_1");
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		for(int i=373;i<411;i+=1){
+			std::string str_val("event_label_");
+			str_val+= std::to_string(i%3);
+			Event ev(str_val,i);
+			ES->insert(ev);
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+	} else {
+		std::vector<Event> ev_vector;
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		ev_vector = ES->query("event_label_1",0,400);
+
+		std::cout << "queried event vector: \n";
+		for(int i=0;i<ev_vector.size();i+=1)
+			std::cout << ev_vector[i].Type() << "," << ev_vector[i].Timestamp() << "\n";
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		ev_vector = ES->query("event_label_1",0,400);
+
+		std::cout << "queried event vector: \n";
+		for(int i=0;i<ev_vector.size();i+=1)
+			std::cout << ev_vector[i].Type() << "," << ev_vector[i].Timestamp() << "\n";
+
+	}
+}
+
+void parallel_test_0(void){
+	const int NUM_THREADS = 2;
+	EventStore ES;
+
+	std::thread lthread[NUM_THREADS];
+
+	for(int i=0;i<NUM_THREADS;i++)
+		lthread[i] = std::thread(thread_fun_0,&ES,i);
+
+	for(int i=0;i<NUM_THREADS;i++)
+		lthread[i].join();
+
+	return ; 
+}
+
+
+#define NUM_EVENTS_TYPES 12
+
+void thread_fun_1(EventStore *ES,int idx, std::mutex *io_mtx){
+	if(idx == -1){
+
+		const long int N = 128;
+		const int N_batches = 32;
+
+		std::srand(time(NULL));
+
+		for(int k=0;k<N_batches;k+=1){
+			long int time_shift = (std::rand())%600;
+
+			for(int i=0;i<N;i+=1){
+				std::string str_val("event_label_");
+				str_val += std::to_string(i%NUM_EVENTS_TYPES);
+				Event ev(str_val,time_shift+( std::rand()%20 ));
+				ES->insert(ev);
+			}	
+
+			// take a small nap
+			std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+		}
+
+		for(int k=0;k<NUM_EVENTS_TYPES;k+=1){
+			std::string str_val("event_label_");
+			str_val += std::to_string(k);
+
+			ES->removeAll("event_label_1");
+		}
+
+	} else {
+		std::string str_val("event_label_");
+		str_val += std::to_string(idx);
+
+		const int N_batches = 32;
+
+		for(int k=0;k<N_batches;k+=1){
+			std::vector<Event> ev_vector = ES->query(str_val,0,400);
+
+			std::this_thread::sleep_for(std::chrono::microseconds(100 + (std::rand()%20) ));
+			{
+				const std::lock_guard<std::mutex> lock(*io_mtx);
+
+				std::cout << "idx = " << idx << " / query size = " << ev_vector.size() << std::endl;
+			}
+		}
+	}
+}
+
+void parallel_test_1(void){
+	const int NUM_THREADS = NUM_EVENTS_TYPES;
+	EventStore ES;
+	std::mutex io_mtx;
+
+	std::thread lthread[NUM_THREADS];
+
+	for(int i=0;i<NUM_THREADS;i++)
+		lthread[i] = std::thread(thread_fun_1,&ES,i-1,&io_mtx);
+
+	for(int i=0;i<NUM_THREADS;i++)
+		lthread[i].join();
+
+	return ; 
+}
+
+int main(void){
+	//test_0();
+	//test_1();
+	//test_2();
+	//test_3();
+	//test_4();
+	//test_5();
+	//test_6();
+	//parallel_test_0();
+	parallel_test_1();
+
+	return 0;
+}
+
+// ------------------
 
 void test_0(void){
 	Event ev("type0",125L);
@@ -315,16 +487,4 @@ void test_6(void){
 		std::cout << ev_vector[i].Type() << "," << ev_vector[i].Timestamp() << "\n";
 
 	return ; 
-}
-
-int main(void){
-	//test_0();
-	//test_1();
-	//test_2();
-	//test_3();
-	//test_4();
-	//test_5();
-	test_6();
-
-	return 0;
 }
